@@ -11,16 +11,22 @@ Body make_body(double irx, double iry, double ivx, double ivy, double imass, int
   return pass;
 }
 
+void is_nanfind(){
+  printf("NAN");
+}
+
 void update_force(Body *a, const Body *b)
 {
-  const double G = 6.67e-11; // gravational constant
-  const double EPS = 3E4;    // softening parameter+ EPS * EPS
+  const static double G = 6.67e-11; // gravational constant
+  const static double EPS = 3E4;    // softening parameter+ EPS * EPS
   double dx = b->rx - a->rx;
   double dy = b->ry - a->ry;
   double dist = sqrt(dx * dx + dy * dy);
-  double F = G * a->mass * b->mass / (dist * dist + EPS * EPS);
+  double F = (G * a->mass * b->mass) / (dist * dist + EPS * EPS);
   a->fx += F * dx / dist;
   a->fy += F * dy / dist;
+  if(isnan(a->fx) || isnan(a->fy))
+    is_nanfind();
 }
 
 void update_location(Body *a, double dt)
@@ -52,7 +58,7 @@ Body *load_bodies(char* csvFile, int *planet_cnt_passback, double *simulation_si
         static const char delimiter[] = " ";
         
         char* token = strtok(line, delimiter);
-        char *hold[6];
+        char *hold[8];
         int i = 0;
         while(token != NULL){
             //printf("%s \n", token );
@@ -64,7 +70,9 @@ Body *load_bodies(char* csvFile, int *planet_cnt_passback, double *simulation_si
         bodies[q].vx = atof(hold[2]);
         bodies[q].vy = atof(hold[3]);
         bodies[q].mass = atof(hold[4]);
-        bodies[q].size = 4;
+        bodies[q].size = 2;
+        bodies[q].fx = 0;
+        bodies[q].fy = 0;
     }
     fclose(stream);
     return bodies;

@@ -27,7 +27,6 @@ struct BHTree
     struct BHTree *NE; // tree representing northeast quadrant
     struct BHTree *SW; // tree representing southwest quadrant
     struct BHTree *SE; // tree representing southeast quadrant
-    int bodycnt;
 };
 typedef struct BHTree BHTree;
 
@@ -92,6 +91,10 @@ bool in_quad(double x, double y, const Quad *quad)
     return false;
 }
 
+void unknowndirf(double x, double y){
+    //printf("rx: %.3e, ry: %.3e\n", x, y );
+}
+
 enum Direction determine_quad(double x, double y, const Quad *quad)
 {
     Quad checkNW = NW(quad);
@@ -111,74 +114,90 @@ enum Direction determine_quad(double x, double y, const Quad *quad)
     if( in_quad(x,y, &checkSE))
         return SEdir;
     
+    unknowndirf(x,y);
     return UNKNOWNdir;
 }
 
 BHTree *bhtree_new(const Quad quad){
-    BHTree tmp = {NULL, quad, NULL, NULL, NULL, NULL,0};
+    BHTree tmp = {NULL, quad, NULL, NULL, NULL, NULL};
     BHTree *new_bhtree = (BHTree *) malloc(sizeof(BHTree));
     memcpy(new_bhtree, &tmp,sizeof(BHTree));
     return new_bhtree;
 }
 
-void bhtree_add(BHTree *current_node, Body *passed_body, bool average){
+void center_mass(const Body *new, Body *aggregate){
+    double total_mass = new->mass + aggregate->mass;
+    double x = (new->rx*new->mass + aggregate->rx*aggregate->mass) / total_mass;    
+    double y = (new->ry*new->mass + aggregate->ry*aggregate->mass) / total_mass;
+    aggregate->rx = x;
+    aggregate->ry = y;    
+    aggregate->mass = total_mass;
+}
+
+bool usable_agg_body(const BHTree *node, const Body *body){
+    const static double delta = 0.5;
+    double dx = node->body->rx - body->rx;
+    double dy = node->body->ry - body->ry;
+    double distance = sqrt(dx*dx + dy*dy);
+    double s_d_ratio = node->quad.length / distance;
+    if(s_d_ratio <= delta)
+        return true;
+    return false;
+}
+
+void bhtree_add(BHTree *current_node, Body *passed_body){
     Body *pass = NULL;
-    if(current_node->body == NULL
-    && nodes_are_null(current_node)) {
+    bool made_agg = false;
+
+    if(current_node->body == NULL) {
         current_node->body = passed_body;
-        current_node->bodycnt++;
         return;
     }
 
-    if(average == true){
+    if (nodes_are_null(current_node)){
         pass = current_node->body;
         Body *new_aggregate_body = malloc(sizeof(Body));
-        memcpy(new_aggregate_body,current_node->body,sizeof(Body));
         current_node->body = new_aggregate_body;
-
-        current_node->body->mass += passed_body->mass;
-        current_node->body->
-
+        Body tmp = {0,0,0,0,0,0,0,0}; // blank body!
+        memcpy(current_node->body, &tmp, sizeof(Body));
     }
-    
 
     enum Direction dir = determine_quad(passed_body->rx, passed_body->ry, &current_node->quad);
     if(dir == NWdir){
         if(current_node->NW == NULL)
             current_node->NW = bhtree_new( NW(&current_node->quad));
-        bhtree_add(current_node->NW, passed_body, true);    
+        bhtree_add(current_node->NW, passed_body);    
     }
     if(dir == NEdir){
         if(current_node->NE == NULL)
             current_node->NE = bhtree_new( NE(&current_node->quad));
-        bhtree_add(current_node->NE, passed_body, true);    
+        bhtree_add(current_node->NE, passed_body);    
     }
     if(dir == SWdir){
         if(current_node->SW == NULL)
             current_node->SW = bhtree_new( SW(&current_node->quad));
-        bhtree_add(current_node->SW, passed_body, true);     
+        bhtree_add(current_node->SW, passed_body);     
     }
     if(dir == SEdir){
         if(current_node->SE == NULL)
             current_node->SE = bhtree_new( SE(&current_node->quad));
-        bhtree_add(current_node->SE, passed_body, true); 
+        bhtree_add(current_node->SE, passed_body); 
     }
     if(dir == UNKNOWNdir){
-        printf("No direction found\n");
         return;
     }
 
-    if(current_node->body != NULL){
-        Body *pass = current_node->body;
-        current_node->body = NULL;
-        bhtree_add(current_node, pass, false); 
-    }
+    center_mass(passed_body, current_node->body);
+
+    if(pass != NULL )
+        bhtree_add(current_node, pass); 
+    
 }
 
 void quad_tree_draw(BHTree *this, SDL_Renderer *gRenderer)
-{
-    draw_quad(&this->quad, gRenderer);
-    if(this->body != NULL)
+{   
+    //draw_quad(&this->quad, gRenderer);
+    if(nodes_are_null(this))
         draw_body(this->body, gRenderer);
     if(this->NW != NULL)
         quad_tree_draw(this->NW, gRenderer);
@@ -190,34 +209,87 @@ void quad_tree_draw(BHTree *this, SDL_Renderer *gRenderer)
         quad_tree_draw(this->SE, gRenderer);
 }
 
-void quad_tree_main(SDL_Renderer *gRenderer, Body bodies[], int body_cnt, double draw_limits)
-{
-    BHTree base = {NULL, (Quad){0,0,draw_limits} , NULL, NULL,NULL,NULL, 0};
-    for(int i = 0; i < body_cnt;i++)
-        bhtree_add(&base, &bodies[i], true);
+void quad_update_force(BHTree *current_node, Body *body){
+    if(nodes_are_null(current_node) 
+    || usable_agg_body(current_node, body)){
+        if(current_node->body != body)
+            update_force(body, current_node->body);
+        return;
+    }
 
-    quad_tree_draw(&base, gRenderer);
+    if(current_node->NW != NULL)
+        quad_update_force(current_node->NW, body);
+    if(current_node->NE != NULL)
+        quad_update_force(current_node->NE, body);
+    if(current_node->SW != NULL)
+        quad_update_force(current_node->SW, body);
+    if(current_node->SE != NULL)
+        quad_update_force(current_node->SE, body);
 }
 
-int main(void)
+void clear_bhtree(BHTree *current_node)
 {
+    if(nodes_are_null(current_node)){
+        free(current_node);
+        return;
+    }
+    if(current_node->NW != NULL)
+        clear_bhtree(current_node->NW);
+    if(current_node->NE != NULL)
+        clear_bhtree(current_node->NE);
+    if(current_node->SW != NULL)
+        clear_bhtree(current_node->SW);
+    if(current_node->SE != NULL)
+        clear_bhtree(current_node->SE);
+    if(nodes_are_null(current_node)){
+        free(current_node);
+        return;
+    }
+}
+
+void quad_tree_main(SDL_Renderer *gRenderer, Body bodies[], int body_cnt, double draw_limits)
+{
+    SDL_SetRenderDrawColor(gRenderer, 255, 255, 255, SDL_ALPHA_OPAQUE);
+    SDL_RenderClear(gRenderer);
+    SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, SDL_ALPHA_OPAQUE);
+
+    BHTree *base = bhtree_new((Quad){0,0,draw_limits});
+ 
+
+    for(int i = 0; i < body_cnt;i++)
+        bhtree_add(base, &bodies[i]);
+
+    quad_tree_draw(base, gRenderer);
+
+    for(int i = 0; i < body_cnt; i++)
+        quad_update_force(base, &bodies[i]);
+    for(int i = 0; i < body_cnt; i++)
+        update_location(&bodies[i], 0.1);
+
+    clear_bhtree(base);
+
+    SDL_RenderPresent(gRenderer);
+}
+
+int main(int argc, char *argv[])
+{
+    if(argc < 2 ){
+        printf("specify input!");
+    }
     const int SCREEN_WIDTH = 700;
     const int SCREEN_HEIGHT = 700;
     SDL_Window *window = init_window( SCREEN_WIDTH, SCREEN_HEIGHT);
     SDL_Renderer *gRenderer = make_renderer(window);
-
+ 
     double simulation_size = 0;
     int planet_cnt = 0;
-    Body *bodies = load_bodies("planets.txt", &planet_cnt, &simulation_size);
+    Body *bodies = load_bodies(argv[1], &planet_cnt, &simulation_size);
     draw_set_scale(SCREEN_WIDTH, SCREEN_HEIGHT, simulation_size, simulation_size);
-    SDL_SetRenderDrawColor(gRenderer, 255, 255, 255, SDL_ALPHA_OPAQUE);
-    SDL_RenderClear(gRenderer);
-    SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, SDL_ALPHA_OPAQUE);
+    printf("simsize: %e, bodycnt: %d \n",simulation_size, planet_cnt);
+    
     quad_tree_main(gRenderer, bodies, planet_cnt, simulation_size);
-    SDL_RenderPresent(gRenderer);
-    SDL_Delay(10000);
+    SDL_Delay(10);
 
-/*
     bool quit = false;
     SDL_Event e;
     while (!quit)
@@ -229,8 +301,8 @@ int main(void)
                 quit = true;
             }
         }
-
-    }*/
+        quad_tree_main(gRenderer, bodies, planet_cnt, simulation_size);
+    }
 
     close_window(window, gRenderer);
     return 0;
